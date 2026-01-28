@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getDb, getMeals } from '@/lib/db';
+import { getMeals, insertMeal } from '@/lib/db';
+import { MealType } from '@/lib/types';
 
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const days = parseInt(searchParams.get('days') || '7');
-    const meals = getMeals(days);
+    const meals = await getMeals(days);
     return NextResponse.json({ success: true, data: meals });
   } catch (error) {
     return NextResponse.json({ success: false, error: String(error) }, { status: 500 });
@@ -24,20 +25,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const db = getDb();
-    const stmt = db.prepare(`
-      INSERT INTO meals (meal_type, description, calories, recorded_at)
-      VALUES (?, ?, ?, ?)
-    `);
-
-    const result = stmt.run(
-      meal_type,
+    const result = await insertMeal({
+      meal_type: meal_type as MealType,
       description,
-      calories || null,
-      recorded_at || new Date().toISOString()
-    );
+      calories: calories || undefined,
+      recorded_at: recorded_at || new Date().toISOString(),
+    });
 
-    return NextResponse.json({ success: true, data: { id: result.lastInsertRowid } });
+    return NextResponse.json({ success: true, data: { id: result.id } });
   } catch (error) {
     return NextResponse.json({ success: false, error: String(error) }, { status: 500 });
   }

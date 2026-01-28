@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import OpenAI from 'openai';
-import { getDb, getMeals, getExercises, getWeightLogs, getLatestGoal, getChatHistory, getLatestWeight } from '@/lib/db';
+import { getMeals, getExercises, getWeightLogs, getLatestGoal, getChatHistory, getLatestWeight, insertChatMessage } from '@/lib/db';
 import { format } from 'date-fns';
 import { ja } from 'date-fns/locale';
+import { Meal, Exercise, WeightLog, Goal } from '@/lib/types';
 
 function getOpenAIClient() {
   return new OpenAI({
@@ -10,17 +11,16 @@ function getOpenAIClient() {
   });
 }
 
-function buildSystemPrompt() {
+function buildSystemPrompt(
+  meals: Meal[],
+  exercises: Exercise[],
+  weights: WeightLog[],
+  goal: Goal | undefined,
+  latestWeight: WeightLog | undefined
+) {
   const now = new Date();
   const currentTime = format(now, 'yyyy年M月d日(E) HH:mm', { locale: ja });
   const dayOfWeek = format(now, 'EEEE', { locale: ja });
-
-  // 過去7日間のデータを取得
-  const meals = getMeals(7);
-  const exercises = getExercises(7);
-  const weights = getWeightLogs(30);
-  const goal = getLatestGoal();
-  const latestWeight = getLatestWeight();
 
   // 食事データを整形
   const mealsText = meals.length > 0
@@ -101,7 +101,7 @@ ${weightsText}
 
 export async function GET() {
   try {
-    const history = getChatHistory(50);
+    const history = await getChatHistory(50);
     return NextResponse.json({ success: true, data: history });
   } catch (error) {
     return NextResponse.json({ success: false, error: String(error) }, { status: 500 });
@@ -120,17 +120,22 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const db = getDb();
-
     // ユーザーメッセージを保存
-    db.prepare(`INSERT INTO chat_messages (role, content) VALUES (?, ?)`).run('user', message);
+    await insertChatMessage({ role: 'user', content: message });
 
-    // 過去の会話履歴を取得
-    const history = getChatHistory(20);
+    // データを並列取得
+    const [meals, exercises, weights, goal, latestWeight, history] = await Promise.all([
+      getMeals(7),
+      getExercises(7),
+      getWeightLogs(30),
+      getLatestGoal(),
+      getLatestWeight(),
+      getChatHistory(20),
+    ]);
 
     // OpenAI APIにリクエスト
     const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
-      { role: 'system', content: buildSystemPrompt() },
+      { role: 'system', content: buildSystemPrompt(meals, exercises, weights, goal, latestWeight) },
       ...history.map(h => ({
         role: h.role as 'user' | 'assistant',
         content: h.content
@@ -148,7 +153,7 @@ export async function POST(request: NextRequest) {
     const reply = completion.choices[0]?.message?.content || 'すみません、応答を生成できませんでした。';
 
     // アシスタントの返答を保存
-    db.prepare(`INSERT INTO chat_messages (role, content) VALUES (?, ?)`).run('assistant', reply);
+    await insertChatMessage({ role: 'assistant', content: reply });
 
     return NextResponse.json({ success: true, data: { reply } });
   } catch (error) {

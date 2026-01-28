@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getDb, getLatestGoal } from '@/lib/db';
+import { getLatestGoal, insertGoal } from '@/lib/db';
 
 export async function GET() {
   try {
-    const goal = getLatestGoal();
+    const goal = await getLatestGoal();
     return NextResponse.json({ success: true, data: goal });
   } catch (error) {
     return NextResponse.json({ success: false, error: String(error) }, { status: 500 });
@@ -22,20 +22,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const db = getDb();
-    const stmt = db.prepare(`
-      INSERT INTO goals (target_weight_kg, target_date, initial_weight_kg, notes)
-      VALUES (?, ?, ?, ?)
-    `);
-
-    const result = stmt.run(
+    const result = await insertGoal({
       target_weight_kg,
       target_date,
       initial_weight_kg,
-      notes || null
-    );
+      notes: notes || undefined,
+    });
 
-    return NextResponse.json({ success: true, data: { id: result.lastInsertRowid } });
+    return NextResponse.json({ success: true, data: { id: result.id } });
   } catch (error) {
     return NextResponse.json({ success: false, error: String(error) }, { status: 500 });
   }

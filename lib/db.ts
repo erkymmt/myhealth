@@ -1,132 +1,141 @@
-import Database from 'better-sqlite3';
-import path from 'path';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { Meal, Exercise, WeightLog, Goal, ChatMessage } from './types';
 
-const dbPath = path.join(process.cwd(), 'data', 'myhealth.db');
+let supabase: SupabaseClient | null = null;
 
-// データベースインスタンスをシングルトンで管理
-let db: Database.Database | null = null;
+export function getDb(): SupabaseClient {
+  if (!supabase) {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-export function getDb(): Database.Database {
-  if (!db) {
-    // dataディレクトリがなければ作成
-    const fs = require('fs');
-    const dataDir = path.dirname(dbPath);
-    if (!fs.existsSync(dataDir)) {
-      fs.mkdirSync(dataDir, { recursive: true });
+    if (!supabaseUrl || !supabaseKey) {
+      throw new Error('Missing Supabase environment variables');
     }
 
-    db = new Database(dbPath);
-    db.pragma('journal_mode = WAL');
-    initTables(db);
+    supabase = createClient(supabaseUrl, supabaseKey);
   }
-  return db;
-}
-
-function initTables(db: Database.Database) {
-  // 目標テーブル
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS goals (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      target_weight_kg REAL NOT NULL,
-      target_date TEXT NOT NULL,
-      initial_weight_kg REAL NOT NULL,
-      notes TEXT,
-      created_at TEXT DEFAULT (datetime('now', 'localtime'))
-    )
-  `);
-
-  // 体重記録テーブル
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS weight_logs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      weight_kg REAL NOT NULL,
-      recorded_at TEXT NOT NULL,
-      created_at TEXT DEFAULT (datetime('now', 'localtime'))
-    )
-  `);
-
-  // 食事記録テーブル
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS meals (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      meal_type TEXT NOT NULL CHECK(meal_type IN ('breakfast', 'lunch', 'dinner', 'snack')),
-      description TEXT NOT NULL,
-      calories INTEGER,
-      recorded_at TEXT NOT NULL,
-      created_at TEXT DEFAULT (datetime('now', 'localtime'))
-    )
-  `);
-
-  // 運動記録テーブル
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS exercises (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      description TEXT NOT NULL,
-      duration_minutes INTEGER,
-      calories_burned INTEGER,
-      heart_rate_avg INTEGER,
-      recorded_at TEXT NOT NULL,
-      created_at TEXT DEFAULT (datetime('now', 'localtime'))
-    )
-  `);
-
-  // チャット履歴テーブル
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS chat_messages (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
-      content TEXT NOT NULL,
-      created_at TEXT DEFAULT (datetime('now', 'localtime'))
-    )
-  `);
+  return supabase;
 }
 
 // ヘルパー関数群
-export function getMeals(days: number = 7): Meal[] {
+export async function getMeals(days: number = 7): Promise<Meal[]> {
   const db = getDb();
-  return db.prepare(`
-    SELECT * FROM meals
-    WHERE recorded_at >= datetime('now', '-${days} days', 'localtime')
-    ORDER BY recorded_at DESC
-  `).all() as Meal[];
+  const daysAgo = new Date();
+  daysAgo.setDate(daysAgo.getDate() - days);
+
+  const { data, error } = await db
+    .from('meals')
+    .select('*')
+    .gte('recorded_at', daysAgo.toISOString())
+    .order('recorded_at', { ascending: false });
+
+  if (error) throw error;
+  return data || [];
 }
 
-export function getExercises(days: number = 7): Exercise[] {
+export async function getExercises(days: number = 7): Promise<Exercise[]> {
   const db = getDb();
-  return db.prepare(`
-    SELECT * FROM exercises
-    WHERE recorded_at >= datetime('now', '-${days} days', 'localtime')
-    ORDER BY recorded_at DESC
-  `).all() as Exercise[];
+  const daysAgo = new Date();
+  daysAgo.setDate(daysAgo.getDate() - days);
+
+  const { data, error } = await db
+    .from('exercises')
+    .select('*')
+    .gte('recorded_at', daysAgo.toISOString())
+    .order('recorded_at', { ascending: false });
+
+  if (error) throw error;
+  return data || [];
 }
 
-export function getWeightLogs(days: number = 30): WeightLog[] {
+export async function getWeightLogs(days: number = 30): Promise<WeightLog[]> {
   const db = getDb();
-  return db.prepare(`
-    SELECT * FROM weight_logs
-    WHERE recorded_at >= datetime('now', '-${days} days', 'localtime')
-    ORDER BY recorded_at DESC
-  `).all() as WeightLog[];
+  const daysAgo = new Date();
+  daysAgo.setDate(daysAgo.getDate() - days);
+
+  const { data, error } = await db
+    .from('weight_logs')
+    .select('*')
+    .gte('recorded_at', daysAgo.toISOString())
+    .order('recorded_at', { ascending: false });
+
+  if (error) throw error;
+  return data || [];
 }
 
-export function getLatestGoal(): Goal | undefined {
+export async function getLatestGoal(): Promise<Goal | undefined> {
   const db = getDb();
-  return db.prepare(`
-    SELECT * FROM goals ORDER BY created_at DESC LIMIT 1
-  `).get() as Goal | undefined;
+
+  const { data, error } = await db
+    .from('goals')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .single();
+
+  if (error && error.code !== 'PGRST116') throw error; // PGRST116 = no rows
+  return data || undefined;
 }
 
-export function getChatHistory(limit: number = 20): ChatMessage[] {
+export async function getChatHistory(limit: number = 20): Promise<ChatMessage[]> {
   const db = getDb();
-  return (db.prepare(`
-    SELECT * FROM chat_messages ORDER BY created_at DESC LIMIT ?
-  `).all(limit) as ChatMessage[]).reverse();
+
+  const { data, error } = await db
+    .from('chat_messages')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  if (error) throw error;
+  return (data || []).reverse();
 }
 
-export function getLatestWeight(): WeightLog | undefined {
+export async function getLatestWeight(): Promise<WeightLog | undefined> {
   const db = getDb();
-  return db.prepare(`
-    SELECT * FROM weight_logs ORDER BY recorded_at DESC LIMIT 1
-  `).get() as WeightLog | undefined;
+
+  const { data, error } = await db
+    .from('weight_logs')
+    .select('*')
+    .order('recorded_at', { ascending: false })
+    .limit(1)
+    .single();
+
+  if (error && error.code !== 'PGRST116') throw error;
+  return data || undefined;
+}
+
+// 挿入ヘルパー
+export async function insertMeal(meal: Omit<Meal, 'id' | 'created_at'>) {
+  const db = getDb();
+  const { data, error } = await db.from('meals').insert(meal).select().single();
+  if (error) throw error;
+  return data;
+}
+
+export async function insertExercise(exercise: Omit<Exercise, 'id' | 'created_at'>) {
+  const db = getDb();
+  const { data, error } = await db.from('exercises').insert(exercise).select().single();
+  if (error) throw error;
+  return data;
+}
+
+export async function insertWeightLog(weight: Omit<WeightLog, 'id' | 'created_at'>) {
+  const db = getDb();
+  const { data, error } = await db.from('weight_logs').insert(weight).select().single();
+  if (error) throw error;
+  return data;
+}
+
+export async function insertGoal(goal: Omit<Goal, 'id' | 'created_at'>) {
+  const db = getDb();
+  const { data, error } = await db.from('goals').insert(goal).select().single();
+  if (error) throw error;
+  return data;
+}
+
+export async function insertChatMessage(message: Omit<ChatMessage, 'id' | 'created_at'>) {
+  const db = getDb();
+  const { data, error } = await db.from('chat_messages').insert(message).select().single();
+  if (error) throw error;
+  return data;
 }

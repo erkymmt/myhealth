@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getDb, getExercises } from '@/lib/db';
+import { getExercises, insertExercise } from '@/lib/db';
 
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const days = parseInt(searchParams.get('days') || '7');
-    const exercises = getExercises(days);
+    const exercises = await getExercises(days);
     return NextResponse.json({ success: true, data: exercises });
   } catch (error) {
     return NextResponse.json({ success: false, error: String(error) }, { status: 500 });
@@ -24,21 +24,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const db = getDb();
-    const stmt = db.prepare(`
-      INSERT INTO exercises (description, duration_minutes, calories_burned, heart_rate_avg, recorded_at)
-      VALUES (?, ?, ?, ?, ?)
-    `);
-
-    const result = stmt.run(
+    const result = await insertExercise({
       description,
-      duration_minutes || null,
-      calories_burned || null,
-      heart_rate_avg || null,
-      recorded_at || new Date().toISOString()
-    );
+      duration_minutes: duration_minutes || undefined,
+      calories_burned: calories_burned || undefined,
+      heart_rate_avg: heart_rate_avg || undefined,
+      recorded_at: recorded_at || new Date().toISOString(),
+    });
 
-    return NextResponse.json({ success: true, data: { id: result.lastInsertRowid } });
+    return NextResponse.json({ success: true, data: { id: result.id } });
   } catch (error) {
     return NextResponse.json({ success: false, error: String(error) }, { status: 500 });
   }

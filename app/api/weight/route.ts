@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getDb, getWeightLogs, getLatestWeight } from '@/lib/db';
+import { getWeightLogs, getLatestWeight, insertWeightLog } from '@/lib/db';
 
 export async function GET(request: NextRequest) {
   try {
@@ -8,11 +8,11 @@ export async function GET(request: NextRequest) {
     const latest = searchParams.get('latest') === 'true';
 
     if (latest) {
-      const weight = getLatestWeight();
+      const weight = await getLatestWeight();
       return NextResponse.json({ success: true, data: weight });
     }
 
-    const weights = getWeightLogs(days);
+    const weights = await getWeightLogs(days);
     return NextResponse.json({ success: true, data: weights });
   } catch (error) {
     return NextResponse.json({ success: false, error: String(error) }, { status: 500 });
@@ -31,18 +31,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const db = getDb();
-    const stmt = db.prepare(`
-      INSERT INTO weight_logs (weight_kg, recorded_at)
-      VALUES (?, ?)
-    `);
-
-    const result = stmt.run(
+    const result = await insertWeightLog({
       weight_kg,
-      recorded_at || new Date().toISOString()
-    );
+      recorded_at: recorded_at || new Date().toISOString(),
+    });
 
-    return NextResponse.json({ success: true, data: { id: result.lastInsertRowid } });
+    return NextResponse.json({ success: true, data: { id: result.id } });
   } catch (error) {
     return NextResponse.json({ success: false, error: String(error) }, { status: 500 });
   }
